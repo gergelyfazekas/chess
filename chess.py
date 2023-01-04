@@ -1,10 +1,10 @@
 import math
 import random
-
+import time
 import numpy as np
 import itertools
 
-SEED = 100000
+SEED = 1
 random.seed(SEED)
 
 KING_NAME = 'king'
@@ -359,11 +359,12 @@ class Pawn(Piece):
         # We can move forward TWO cells if that cell is empty, we haven't moved yet and we are not blocking a check currently
         try:
             if self.board.cells[tuple(self.position + self.possible_step_directions['initial_long_step'])] is None:
-                if np.all(self.position == self.starting_position):
-                    for opp_piece in opponent.pieces:
-                        if not self.blocking_check(from_piece=opp_piece):
-                            available_new_positions.append(
-                                self.position + self.possible_step_directions['initial_long_step'])
+                if self.board.cells[tuple(self.position + self.possible_step_directions['normal_step'])] is None:
+                    if np.all(self.position == self.starting_position):
+                        for opp_piece in opponent.pieces:
+                            if not self.blocking_check(from_piece=opp_piece):
+                                available_new_positions.append(
+                                    self.position + self.possible_step_directions['initial_long_step'])
         except KeyError:
             pass
         return available_new_positions, []
@@ -806,6 +807,7 @@ class Board:
             self.update_board()
             if show:
                 print(self)
+                time.sleep(2)
 
             # only for testing
             limiter += 1
