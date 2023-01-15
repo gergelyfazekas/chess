@@ -2,10 +2,9 @@ import pickle
 import random
 import time
 import numpy as np
-import copy
-import inspect
 import itertools
 
+# Setting seed for reproducibility
 SEED = 2
 random.seed(SEED)
 
@@ -17,8 +16,8 @@ ROOK_NAMES = ['rook_1', 'rook_2']
 BISHOP_NAMES = ['bishop_1', 'bishop_2']
 PAWN_NAMES = ['pawn_1', 'pawn_2', 'pawn_3', 'pawn_4', 'pawn_5', 'pawn_6', 'pawn_7', 'pawn_8']
 
-# starting position using x-y coordinates with x, y in [1,8]
-# white and black are mirrored, e.g. bishop_1 is on x=3 for both teams (they face each other at start)
+# Starting position using x-y coordinates with x, y in [1,8]
+# White and black are mirrored, e.g. bishop_1 is on x=3 for both teams (they face each other at start)
 with open("piece_starting_positions.pickle", "rb") as f:
     STARTING_POSITIONS = pickle.load(f)
 
@@ -69,74 +68,63 @@ class Piece:
         """Implemented at each piece subclass: see for example Pawn.set_step_directions"""
         pass
 
-    def copy(self):
-        return copy.copy(self)
+    def move(self, to, remember=True):
+        """moves a piece to a new position (and also )
+        args:
+        to: tuple, the new position as a tuple of (x,y) coordinates
+        remember: bool, if True appends the move to the move history of self.board (has to be True for the chess bot)
 
-    def move(self, to):
-        """to: new position (x,y)
-        return:
+        returns:
         self, old_pos, new_pos -- for tracking the steps made during a game
         """
         old_pos = self.position
         self.position = to
-
         move = (self, old_pos, self.position)
-        self.board.move_history.append(move)
+        if remember:
+            self.board.move_history.append(move)
         return move
 
     def promote(self, new_position, verbose=False):
         """Implemented only for Pawn"""
         pass
 
-    def choose_new_position(self):
-        """handles all new-position-selecting procedures the returned value can be fed to self.move()"""
-        legal_new_positions = self.get_legal_positions()
-        if legal_new_positions:
-            return random.choice(legal_new_positions)
-        else:
-
-            # INCORRECT LOGIC (possibly): why empty list? None, False?
-
-            return []
-
     def blocking_check(self, from_piece):
-        """returns if we are blocking check or not, if we are king we are not blocking check"""
+        """returns if we are blocking check (bool) from a particular piece
+        args:
+        from_piece: Piece instance, would this piece cause a check if we were not at this position
 
-        # INCORRECT LOGIC:  
-        # maybe have a self.king property for the pieces as well or a self.player 
-        # Better approach:
-        # relevant_positions = from_piece.get_positions_in_direction(our_king)(if this is empty we are not blocking check)
-        # 1) if we are standing in one of relevant_positions and
-        # 2) we are closer to from_piece than the king and
-        # 3) we are the only ones who is closer
-        # We are blocking check from from_piece so we have to consider (the below is another function's job)
-        #   1) staying in one place or
-        #   2) moving in that direction (which might include capturing from_piece)
-
+        returns:
+        bool, True if we are blocking a check from 'from_piece' (if we are king we are not blocking check)
+        """
         positions_in_direction_of_king = from_piece.get_closer_positions_in_direction(self.player.king.position)
         if self.piece_type == KING_NAME:
             return False
         else:
-            if positions_in_direction_of_king:
-                # all closer are empty except for us and our king
-                if sum([0 if self.board.cells[tuple(pos)] is None else 1 for pos in
-                        positions_in_direction_of_king]) == 2:
+            if from_piece.piece_type in ("knight", "pawn"):
+                # cannot block a check for a knight or a pawn by their nature
+                return False
+            else:
+                if positions_in_direction_of_king:
+                    # all closer are empty except for us and our king
+                    if sum([0 if self.board.cells[tuple(pos)] is None else 1 for pos in
+                            positions_in_direction_of_king]) == 2:
 
-                    if tuple(self.position) in [tuple(item) for item in positions_in_direction_of_king]:
-                        return True
+                        if tuple(self.position) in [tuple(item) for item in positions_in_direction_of_king]:
+                            return True
+                        else:
+                            return False
                     else:
                         return False
                 else:
                     return False
-            else:
-                return False
 
     def get_positions_in_check(self):
-        """returns all positions which are not available for the king to step into as one piece keeps it in check"""
+        """get all positions unavailable for the king to step into as one opponent piece keeps it in check"""
         positions_in_check = []
+        
         for p in self.opponent.pieces:
             in_check = p.positions_kept_in_check()
-            # print("in_check", in_check, p)
+            
             if in_check:
                 positions_in_check.extend(in_check)
 
@@ -144,8 +132,9 @@ class Piece:
         return positions_in_check
 
     def positions_kept_in_check(self):
-        """returns all positions that we are keeping in check (not all pieces like get_positions_in_check)"""
+        """returns all positions that we (one piece) are keeping in check (not all pieces like get_positions_in_check)"""
         check_threat = []
+        
         # if king
         if self.piece_type == KING_NAME:
             possible_positions = self.convert_steps_to_positions()
@@ -172,15 +161,11 @@ class Piece:
 
         # if not king, pawn or knight
         else:
-
             possible_positions = self.convert_steps_to_positions()
 
             for new_position in possible_positions:
-                # print(self)
-                # print("new_position", new_position)
                 # if all closer positions to us are also empty
                 closer_positions = self.get_closer_positions_in_direction(new_position)
-                # print("closer_positions", closer_positions)
                 # closer positions is a list but all cells are empty
                 if closer_positions:
                     if sum([0 if self.board.cells[tuple(pos)] is None else 1 for pos in
@@ -200,14 +185,19 @@ class Piece:
         return check_threat
 
     def giving_check(self):
+        """returns True if the current piece causes check for the opponent's king (else False)"""
         check_threat = self.positions_kept_in_check()
-        tuplized_check_threat = [tuple(i) for i in check_threat]
-        if tuple(self.opponent.king.position) in tuplized_check_threat:
+        check_threat = [tuple(i) for i in check_threat]
+        if tuple(self.opponent.king.position) in check_threat:
             return True
         else:
             return False
 
-    def remove_piece_ability(self, piece):
+    def capture_ability(self, piece):
+        """returns True if the current piece can capture a particular piece of the opponent (else False)
+        args:
+        piece: Piece instance, the opponent's piece we are interested in capturing
+        """
         legal_moves = self.get_legal_positions()
         legal_moves = [tuple(item) for item in legal_moves]
         if tuple(piece.position) in legal_moves:
@@ -215,14 +205,16 @@ class Piece:
         else:
             return False
 
-    def smaller_empty(self, smaller_step_positions):
-        smaller_empty = [0 if self.board.cells[tuple(smaller_pos)] is None else 1 for smaller_pos in
-                         smaller_step_positions]
-        if sum(smaller_empty) == 0:
-            return True
-
-    def get_steps_in_direction(self, step):
-        """returns the steps in the direction of a given step, sorted in ascending order (by norm)"""
+    def _get_steps_in_direction(self, step):
+        """returns the steps in the direction of a given step, sorted in ascending order (by norm)
+        args:
+        step: np.array, e.g. a normal step for a white pawn is np.array([0,1])
+        
+        example usage:
+        result = Piece("pawn_1", "white")._get_steps_in_direction(step=np.array([0,1])
+        print(result)
+            out: [np.array([0,1]), np.array([0,2])]
+        """
         steps_in_direction = []
         possible_directions = list(self.possible_step_directions.keys())
         # direction: forward-left, backward_left ...
@@ -242,7 +234,7 @@ class Piece:
         return steps_in_direction
 
     def get_positions_in_direction(self, position):
-        """returns positions (only the ones on the board!!!) in the direction of a given position, sorted ascending
+        """returns positions (only the ones on the board!) in the direction of a given position, sorted ascending
         returns empty list if no positions in that direction
         """
         positions_in_direction = []
@@ -250,7 +242,7 @@ class Piece:
         imaginary_step = position - self.position
 
         # steps in direction is sorted from smallest step to largest
-        steps_in_direction = self.get_steps_in_direction(imaginary_step)
+        steps_in_direction = self._get_steps_in_direction(imaginary_step)
 
         for step in steps_in_direction:
             try:
@@ -263,8 +255,9 @@ class Piece:
         return positions_in_direction
 
     def convert_steps_to_positions(self):
-        """returns all positions for the current piece, including unavailable ones"""
-
+        """returns all positions for the current piece, including unavailable ones
+        (uses the piece's natural step directions and its current position)
+        """
         new_positions = []
 
         # direction is forward_right, backward_right ...
@@ -284,26 +277,17 @@ class Piece:
         return new_positions
 
     def get_closer_positions_in_direction(self, position):
-        """returns positions which are in the direction of position but are closer-equal (inclusive) to us now
+        """returns positions which are in the direction of position but are closer-equal (inclusive) to us
         only considers positions which are on the board
         returns an empty list if there are no positions in that direction
         """
         closer_positions = []
         positions_in_direction = self.get_positions_in_direction(position)
-
         new_position_distance = np.linalg.norm(position - self.position)
-
-        # if tuple(position) == tuple([2,7]):
-        #     print("positions in direction", positions_in_direction)
-        #     print("distance", new_position_distance)
 
         if positions_in_direction:
             for pos in positions_in_direction:
-                # if tuple(position) == tuple([2, 7]):
-                #     print("pos", pos)
-                #     print("np.linalg.norm(pos - self.position)", np.linalg.norm(pos - self.position))
                 if np.linalg.norm(pos - self.position) <= new_position_distance:
-                    # print("here")
                     closer_positions.append(pos)
 
             # sort ascending
@@ -318,7 +302,8 @@ class Piece:
 
     def get_legal_positions(self):
         """returns currently available positions (to which we can actually move)
-         from the set of all positions (which is returned by self.convert_steps_to_positions)"""
+        if a position is not returned by this function the chess bot won't be able to step there
+         """
 
         legal_moves = []
         check_threat = []
@@ -357,7 +342,6 @@ class Piece:
                         return legal_moves
 
                 # if we are not blocking another check -- we can move in between the attacker and the king or capture
-
                 possible_positions = self.convert_steps_to_positions()
                 possible_positions = [tuple(item) for item in possible_positions]
                 piece_causing_check = self.opponent.piece_giving_check()
@@ -556,10 +540,9 @@ class Piece:
                         if self.blocking_check(from_piece=opp_piece):
                             possible_positions = self.convert_steps_to_positions()
                             possible_positions = self.remove_duplicate_positions(possible_positions)
-                            legal_moves = []
-                            for new_position in possible_positions:
-                                # empty legal_moves since we can only move this way now
+                            legal_moves = []    # empty legal_moves since we can only move this way now
 
+                            for new_position in possible_positions:
                                 # pawn
                                 if self.piece_type == "pawn":
 
@@ -729,7 +712,6 @@ class King(Piece):
 
     def convert_steps_to_positions(self):
         """converts steps to positions using: current_position + step for step in possible_steps"""
-
         # castling not implemented yet !!
 
         new_positions = []
@@ -748,15 +730,19 @@ class King(Piece):
         return new_positions
 
     def king_in_check(self):
+        """returns True if we are in check, else False"""
         positions_in_check = self.get_positions_in_check()
         positions_in_check = [tuple(item) for item in positions_in_check]
-
         if tuple(self.position) in positions_in_check:
             return True
         else:
             return False
 
     def other_king_distance(self, from_position):
+        """returns the distance from the other player's king
+        args:
+        from_position: np.array, opponent's king's position
+        """
         opponent_king = None
 
         for p in self.opponent.pieces:
@@ -943,28 +929,18 @@ class Player:
     def __repr__(self):
         return self.color
 
-    def copy(self):
-        copied_player = copy.copy(self)
-        copied_player.pieces = [piece.copy() for piece in self.pieces]
-        copied_player.king = self.king.copy()
-        copied_player.queen = self.queen.copy()
-        copied_player.bishops = [b.copy() for b in self.bishops]
-        copied_player.rooks = [r.copy() for r in self.rooks]
-        copied_player.knights = [k.copy() for k in self.knights]
-        copied_player.pawns = [p.copy() for p in self.pawns]
-        return copied_player
-
     def pop_piece(self, piece, verbose=False):
+        """removes a piece from Player.pieces (used when the piece is captured)"""
         if piece.piece_type != 'king':
             popped = self.pieces.pop(self.pieces.index(piece))
             if verbose:
                 print(popped)
         else:
-            # if piece.color != self.color:
             print(self.board)
             raise ValueError("Tried to remove king")
 
     def get_available_pieces(self):
+        """returns a sublist of Player.pieces for which legal steps are available"""
         available = []
         for piece in self.pieces:
             avail = piece.get_legal_positions()
@@ -972,18 +948,8 @@ class Player:
                 available.append(piece)
         return available
 
-    def choose_piece(self):
-        available_pieces = self.get_available_pieces()
-        if available_pieces:
-            try:
-                return random.choice(available_pieces)
-            except TypeError:
-                # when available pieces is not a list (e.g. king)
-                return available_pieces
-        else:
-            raise NotImplementedError("Draw")
-
     def get_piece(self, position=None, id=None):
+        """returns a Piece instance based on either position or id"""
         if position is not None:
             for piece in self.pieces:
                 if np.all(piece.position == position):
@@ -996,7 +962,10 @@ class Player:
             return None
 
     def calculate_score(self):
-
+        """ Chess bot only:
+        get the score of the player at a particular point during the game
+        this is used to rank steps for the chess bot
+        """
         our_total = sum([piece.value for piece in self.pieces])
         opponent_total = sum([piece.value for piece in self.opponent.pieces])
 
@@ -1014,7 +983,7 @@ class Player:
         return our_score
 
     def choose_move(self, counter=0, max_depth=1):
-        """
+        """ Chess bot only:
         Looks ahead max_depth steps and decides which step to take based on the outcome of board.calculate_score
         returns current_best = [score, piece, new_position]"""
 
@@ -1070,13 +1039,14 @@ class Player:
                 return opponents_max
 
     def piece_giving_check(self):
+        """returns our player's pieces which are giving check to opponent's king"""
         for p in self.pieces:
             if p.giving_check():
                 return p
 
-
     @property
     def losing(self):
+        """returns True if we are suffering check mate, ends the game"""
         if self.king.king_in_check():
             check_giving_piece = self.opponent.piece_giving_check()
 
@@ -1084,9 +1054,7 @@ class Player:
                 return False
 
             for p in self.pieces:
-                if not p.remove_piece_ability(check_giving_piece):
-                    new_positions = self.king.convert_steps_to_positions()
-                    new_positions = self.king.remove_duplicate_positions(new_positions)
+                if not p.capture_ability(check_giving_piece):
                     avail = self.king.get_legal_positions()
                     if avail:
                         return False
@@ -1100,7 +1068,6 @@ class Player:
                                 if np.all(np.sign(pos - check_giving_piece.position) == direction_signs):
                                     step_between_them.append(pos)
 
-
                             avail_pieces = self.get_available_pieces()
 
                             for piece in avail_pieces:
@@ -1111,10 +1078,10 @@ class Player:
                 else:
                     return False
 
-            # After for loop
+            # After the for loop
             # None of the pieces returned False -- so it must be True
-            print(f"{self} is losing")
-            print(self.board)
+            # print(f"{self} is losing")
+            # print(self.board)
             return True
         else:
             return False
@@ -1174,12 +1141,13 @@ class Board:
         return result
 
     def pop_last_move(self):
+        """ Chess bot only:
+        deletes the last move from self.move_history"""
         piece, old_pos, new_pos = self.move_history[-1]
         piece.position = old_pos
         self.move_history.pop(-1)
 
     def set_opponents_for_players_and_pieces(self):
-        # set opponents for player and piece objects
         self.player_1.opponent = self.player_2
         for piece in self.player_1.pieces:
             piece.opponent = self.player_1.opponent
@@ -1195,33 +1163,13 @@ class Board:
             piece.player = self.player_2
 
     def set_board_for_players_and_pieces(self):
-        # set board for all players and pieces
         for player in self.players:
             player.board = self
             for piece in player.pieces:
                 piece.board = self
 
-    def copy(self):
-        copied_board = copy.copy(self)
-        copied_board.player_1 = self.player_1.copy()
-        copied_board.player_1.board = copied_board
-        copied_board.player_2 = self.player_2.copy()
-        copied_board.player_2.board = copied_board
-        copied_board.players = [copied_board.player_1, copied_board.player_2]
-
-        copied_board.set_opponents_for_players_and_pieces()
-        copied_board.set_players_for_pieces()
-        copied_board.set_board_for_players_and_pieces()
-
-        for piece in copied_board.player_1.pieces:
-            piece.player = copied_board.player_1
-
-        for piece in copied_board.player_2.pieces:
-            piece.player = copied_board.player_2
-
-        return copied_board
-
     def get_player(self, color):
+        """returns a Player instance based on its color"""
         if self.player_1.color == color:
             return self.player_1
         elif self.player_2.color == color:
@@ -1230,15 +1178,22 @@ class Board:
             raise ValueError(f"no player with color: {color}")
 
     def update_board(self):
+        """Update every cell to contain a piece object based on the piece's position"""
         self.cells = {pos: None for pos in self.all_positions}
         for player in self.players:
             for piece in player.pieces:
                 self.cells[tuple(piece.position)] = piece
 
     def play(self, show=True, verbose=True):
-        # limiter is only for testing until player.losing is not functioning
-        limiter = 0
+        """Plays one chess game
 
+        args:
+        show: bool, if True prints the board after every single step
+        verbose: bool, if True prints every moved piece and its new position
+
+        The chess bot adaptively selects the max_depth to which it looks ahead
+                based on the number of legal steps it can take (e.g. advantageous when its king is in check)
+        """
         i = 0
         run = True
         while run:
@@ -1249,7 +1204,6 @@ class Board:
                 active_player = self.player_2
                 passive_player = self.player_1
 
-            # active_piece = active_player.choose_piece()
             if active_player.color == "white":
                 p, new_pos = active_player.choose_move(max_depth=0)
             else:
@@ -1257,29 +1211,32 @@ class Board:
                 complexity = []
                 for p in a:
                     complexity.extend(p.get_legal_positions())
-                if len(complexity) < 4:
-                    print("max depth: 2")
+                if len(complexity) < 2:
+                    print("Chess bot: max depth = 2")
+                    p, new_pos = active_player.choose_move(max_depth=3)
+                elif len(complexity) < 4:
+                    print("Chess bot: max depth = 2")
                     p, new_pos = active_player.choose_move(max_depth=2)
                 elif len(complexity) < 10:
-                    print("max depth: 1")
+                    print("Chess bot: max depth = 1")
                     p, new_pos = active_player.choose_move(max_depth=1)
                 else:
-                    print("max depth: 0")
+                    print("Chess bot: max depth = 0")
                     p, new_pos = active_player.choose_move(max_depth=0)
 
             if isinstance(p, Piece):
-                print("piece", p, new_pos)
+                if verbose:
+                    print("piece", p, new_pos)
                 active_piece = active_player.get_piece(id=p.id)
             else:
-                print("choose move malfunction")
-                avail_pieces = active_player.get_available_pieces()
-                random_piece_id = random.choice([piece.id for piece in avail_pieces])
-                active_piece = active_player.get_piece(id=random_piece_id)
-                avail_positions = active_piece.get_legal_positions()
-                new_pos = random.choice(avail_positions)
+                raise ValueError(f"Selected piece is of type {type(p)} and not Piece")
+                # avail_pieces = active_player.get_available_pieces()
+                # random_piece_id = random.choice([piece.id for piece in avail_pieces])
+                # active_piece = active_player.get_piece(id=random_piece_id)
+                # avail_positions = active_piece.get_legal_positions()
+                # new_pos = random.choice(avail_positions)
 
             if active_piece:
-                # new_position = active_piece.choose_new_position()
                 new_position = new_pos
 
                 # if opponent is there -- remove that piece from the board
@@ -1290,26 +1247,21 @@ class Board:
                 active_piece.promote(new_position, verbose)
 
             else:
-                print("Finished")
-                break
+                if run:
+                    print("Finished with tie")
+                else:
+                    pass
 
             self.update_board()
 
             if show:
                 # show board
                 print(self)
-                time.sleep(0.1)
-
-            # only for testing
-            limiter += 1
-            if limiter == 1000:
-                print(limiter)
-                print(self)
-                break
 
             # increment i
             i += 1
 
+            # Check if anyone is losing
             run = not np.any([self.player_1.losing, self.player_2.losing])
 
             if (len(self.player_1.pieces) + len(self.player_2.pieces)) == 2:
@@ -1317,29 +1269,20 @@ class Board:
                 run = False
 
             if not run:
-                print(i)
+                print(self)
+                if self.player_1.losing:
+                    print(f"{self.player_1.color} has lost")
+                else:
+                    print(f"{self.player_2.color} has lost")
+                print("Total number of steps: ", i)
 
 
 def main():
-    # initiate board
+    """Initialize and play one game with two chess bots against each other"""
     player_1 = Player("white")
     player_2 = Player("black")
     board = Board(player_1, player_2)
     board.play(show=False, verbose=False)
-
-    # print(board)
-    # board.player_1.pieces[0].move(to=(1,4))
-    # board.player_1.pieces[1].move(to=(2, 4))
-    # board.player_1.pieces[2].move(to=(3, 4))
-    # board.player_2.pieces[0].move(to=(1,4))
-    # board.player_1.pop_piece(board.player_1.pieces[0])
-    # board.update_board()
-    # print(board)
-
-
-    # chosen_move = board.player_2.choose_move(max_depth=3)
-    # print("chosen_move", chosen_move)
-    # board.play(show=True)
 
 
 if __name__ == '__main__':
