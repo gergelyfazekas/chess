@@ -8,7 +8,7 @@ import itertools
 SEED = 2
 random.seed(SEED)
 
-# piece names
+# Piece names
 KING_NAME = 'king'
 QUEEN_NAME = 'queen'
 KNIGHT_NAMES = ['knight_1', 'knight_2']
@@ -21,7 +21,7 @@ PAWN_NAMES = ['pawn_1', 'pawn_2', 'pawn_3', 'pawn_4', 'pawn_5', 'pawn_6', 'pawn_
 with open("piece_starting_positions.pickle", "rb") as f:
     STARTING_POSITIONS = pickle.load(f)
 
-# standard piece values from wikipedia
+# Standard piece values from wikipedia -- Chess bot only
 with open("piece_values.pickle", "rb") as f:
     PIECE_VALUES = pickle.load(f)
 
@@ -48,9 +48,23 @@ class Piece:
         self.set_step_directions()
 
     def __repr__(self):
+        """first letter of self.color + first letter of self.name + last letter of self.name
+        Examples:
+        w_p1: white pawn_1
+        w_kg: white king
+        b_k2: black knight_2
+        b_qw: black queen new (pawn was promoted for a new queen)
+        """
         return f"{self.color[0]}_{self.name[0]}{self.name[-1]}"
 
     def __str__(self):
+        """first letter of self.color + first letter of self.name + last letter of self.name
+        Examples:
+        w_p1: white pawn_1
+        w_kg: white king
+        b_k2: black knight_2
+        b_qw: black queen new (pawn was promoted for a new queen)
+        """
         return f"{self.color[0]}_{self.name[0]}{self.name[-1]}"
 
     @staticmethod
@@ -1191,8 +1205,9 @@ class Board:
         show: bool, if True prints the board after every single step
         verbose: bool, if True prints every moved piece and its new position
 
-        The chess bot adaptively selects the max_depth to which it looks ahead
+        The 'black' chess bot adaptively selects the max_depth to which it looks ahead
                 based on the number of legal steps it can take (e.g. advantageous when its king is in check)
+        The 'white' chess bot consistently looks 1 step ahead (which is defined as max_depth=0)
         """
         i = 0
         run = True
@@ -1212,16 +1227,16 @@ class Board:
                 for p in a:
                     complexity.extend(p.get_legal_positions())
                 if len(complexity) < 2:
-                    print("Chess bot: max depth = 2")
+                    print("Chess bot: color = black, max depth = 2")
                     p, new_pos = active_player.choose_move(max_depth=3)
                 elif len(complexity) < 4:
-                    print("Chess bot: max depth = 2")
+                    print("Chess bot: color = black, max depth = 2")
                     p, new_pos = active_player.choose_move(max_depth=2)
                 elif len(complexity) < 10:
-                    print("Chess bot: max depth = 1")
+                    print("Chess bot: color = black, max depth = 1")
                     p, new_pos = active_player.choose_move(max_depth=1)
                 else:
-                    print("Chess bot: max depth = 0")
+                    print("Chess bot: color = black, max depth = 0")
                     p, new_pos = active_player.choose_move(max_depth=0)
 
             if isinstance(p, Piece):
