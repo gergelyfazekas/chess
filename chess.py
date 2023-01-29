@@ -3,6 +3,7 @@ import random
 import time
 import numpy as np
 import itertools
+from deep_learning import NeuralNet
 
 # Setting seed for reproducibility
 SEED = 2
@@ -927,8 +928,11 @@ class Knight(Piece):
 
 
 class Player:
-    def __init__(self, color):
+    def __init__(self, color, engine, id=None, max_depth=None, model_path=None, kernel_initializer='glorot_uniform'):
         self.color = color
+        self.engine = engine
+        self.id = id
+        self.elo_score = 1400
         self.opponent = None
         self.pawns = [Pawn(name=pawn_name, color=self.color) for pawn_name in PAWN_NAMES]
         self.king = King(name=KING_NAME, color=self.color)
@@ -939,9 +943,59 @@ class Player:
         self.pieces = self.pawns + self.bishops + self.knights + self.rooks + [self.king] + [self.queen]
         self.active = False
         self.board = None
+        self.steps_encoded = self.encode_all_steps()
+
+        # Verifying other arguments of engine
+        if self.engine not in (0, 1, 2, "human", "robot", "ai"):
+            raise ValueError("engine should be one of: 0,1,2,human, robot, ai")
+        else:
+            # Robot: forward looking
+            if self.engine == "robot" or self.engine == 1:
+                if max_depth not in (0, 1, 2, "adaptive"):
+                    raise ValueError("Invalid max_depth for {self.color}. Choose one of: 0,1,2,'adaptive'.")
+                else:
+                    self.max_depth = max_depth
+
+            # AI: neural net
+            elif self.engine == "ai" or self.engine == 2:
+                if model_path:
+                    with open(model_path, "rb") as pickle_file:
+                        self.nn = pickle.load(pickle_file)
+                        self.nn.player = self
+                        self.model_path = model_path
+                else:
+                    # No model path given -- initialize a new NeuralNet
+                    print("No model path: Initializing a new NeuralNet")
+                    self.nn = NeuralNet(kernel_initializer=kernel_initializer)
+                    self.nn.player = self
+
 
     def __repr__(self):
         return self.color
+
+    def encode_all_steps(self):
+        """creates an encoding of (x,y,id) for all positions on the board combined with all piece.id in self.pieces"""
+        ids = [p.id for p in self.pieces]
+        all_combo = list(itertools.product(range(1, 9), range(1, 9), ids))
+        all_steps_encoded = [int(str(item[0]) + str(item[1]) + str(item[2])) for item in all_combo]
+        return sorted(all_steps_encoded)
+
+    def encode_legal_steps(self):
+        """creates an encoding of (x,y,id) for legal positions combined with piece.id in available pieces"""
+        legal_steps_encoded = []
+        for p in self.pieces:
+            legal_pos = p.get_legal_positions()
+            if legal_pos:
+                for pos in legal_pos:
+                    step_encoded = int(str(pos[0]) + str(pos[1]) + str(p.id))
+                    legal_steps_encoded.append(step_encoded)
+
+        return legal_steps_encoded
+
+    def decode_step(self, encoded_step):
+        s = str(encoded_step)
+        x, y, id = int(s[0]), int(s[1]), int(s[2:])
+        return x, y, id
 
     def pop_piece(self, piece, verbose=False):
         """removes a piece from Player.pieces (used when the piece is captured)"""
@@ -962,7 +1016,7 @@ class Player:
                 available.append(piece)
         return available
 
-    def get_piece(self, position=None, id=None):
+    def get_piece(self, position=None, id=None, name=None):
         """returns a Piece instance based on either position or id"""
         if position is not None:
             for piece in self.pieces:
@@ -972,6 +1026,11 @@ class Player:
         elif id is not None:
             for piece in self.pieces:
                 if piece.id == id:
+                    return piece
+            return None
+        elif name is not None:
+            for piece in self.pieces:
+                if piece.name == name or piece.__repr__() == name:
                     return piece
             return None
 
@@ -996,7 +1055,7 @@ class Player:
         our_score = (our_total - opponent_total) + random.randint(1, 3)
         return our_score
 
-    def choose_move(self, counter=0, max_depth=1):
+    def look_forward(self, counter=0, max_depth=1):
         """ Chess bot only:
         Looks ahead max_depth steps and decides which step to take based on the outcome of board.calculate_score
         returns current_best = [score, piece, new_position]"""
@@ -1040,7 +1099,7 @@ class Player:
 
                 for pos in avail_positions:
                     piece.move(to=pos)
-                    opponents_best_score = self.opponent.choose_move(counter=(counter+1), max_depth=max_depth)
+                    opponents_best_score = self.opponent.look_forward(counter=(counter+1), max_depth=0)
                     self.board.pop_last_move()
 
                     if opponents_best_score < opponents_max:
@@ -1051,6 +1110,87 @@ class Player:
                 return current_best_move
             else:
                 return opponents_max
+
+    def select_depth(self, verbose=True):
+        avail_pieces = self.get_available_pieces()
+        # opp_avail_pieces = self.opponent.get_available_pieces()
+        complexity = []
+        for p in avail_pieces:
+            complexity.extend(p.get_legal_positions())
+        # for opp_p in opp_avail_pieces:
+        #     complexity.extend(opp_p.get_legal_positions())
+
+        if len(complexity) < 4:
+            d = 2
+        elif len(complexity) < 8:
+            d = 1
+        elif len(complexity) < 20:
+            d = 0
+        else:
+            d = 0
+        if verbose:
+            print(self.color, "depth: ", d)
+        return d
+
+    def encode_board(self):
+        """Creates an encoding for the current board where each cell has the id of the piece standing on it
+        returns a 64-long vector with numbers from 0-32
+        """
+        encoded_board = []
+        for pos in self.board.all_positions:
+            try:
+                encoded_board.append(self.board.cells[pos].id)
+            except AttributeError:
+                encoded_board.append(0)
+
+        return encoded_board
+
+    def human_move(self):
+        user_input = input("Select: piece, x, y \n")
+        user_input = user_input.split(sep=",")
+        piece_repr = user_input[0]
+        x = int(user_input[1])
+        y = int(user_input[2])
+
+        # pop spaces from front and back
+        if piece_repr[-1] == " ":
+            piece_repr.pop(-1)
+        elif piece_repr[0] == " ":
+            piece_repr.pop(0)
+
+        p = self.get_piece(name=piece_repr)
+        new_pos = np.array([x, y])
+
+        legal = p.get_legal_positions()
+        if legal:
+            if tuple(new_pos) in [tuple(item) for item in legal]:
+                return p, new_pos
+            else:
+                print("Invalid step!")
+                p, new_pos = self.human_move()
+                return p, new_pos
+        else:
+            print("Invalid piece!")
+            p, new_pos = self.human_move()
+            return p, new_pos
+
+
+    def choose_move(self):
+        if self.engine == "human" or self.engine == 0:
+            p, new_pos = self.human_move()
+        elif self.engine == "robot" or self.engine == 1:
+            if self.max_depth == "adaptive":
+                depth = self.select_depth()
+            else:
+                depth = self.max_depth
+            p, new_pos = self.look_forward(max_depth=depth)
+        else:
+            current_board = self.encode_board()
+            p, new_pos = self.nn.forward_pass(current_board)
+
+        if not isinstance(p, Piece):
+            print("Possible tie")
+        return p, new_pos
 
     def piece_giving_check(self):
         """returns our player's pieces which are giving check to opponent's king"""
@@ -1094,20 +1234,21 @@ class Player:
 
             # After the for loop
             # None of the pieces returned False -- so it must be True
-            # print(f"{self} is losing")
-            # print(self.board)
             return True
         else:
             return False
 
 
 class Board:
-    def __init__(self, player_1, player_2):
+    def __init__(self, player_1, player_2, reset=False, max_steps=1000):
         self.all_positions = list(itertools.product(range(1, 9), range(1, 9)))
         self.player_1 = player_1
         self.player_2 = player_2
         self.players = [player_1, player_2]
+        self.max_steps = max_steps
         self.move_history = []
+        if reset:
+            self.reset()
         # set board
         self.set_board_for_players_and_pieces()
         # set opponents for both players
@@ -1153,6 +1294,47 @@ class Board:
                 line = line_segment + new_line
                 result = line + result
         return result
+
+    def reset(self):
+        for player in self.players:
+            player.pawns = [Pawn(name=pawn_name, color=player.color) for pawn_name in PAWN_NAMES]
+            player.king = King(name=KING_NAME, color=player.color)
+            player.queen = Queen(name=QUEEN_NAME, color=player.color)
+            player.bishops = [Bishop(name=bishop_name, color=player.color) for bishop_name in BISHOP_NAMES]
+            player.rooks = [Rook(name=rook_name, color=player.color) for rook_name in ROOK_NAMES]
+            player.knights = [Knight(name=knight_name, color=player.color) for knight_name in KNIGHT_NAMES]
+            player.pieces = player.pawns + player.bishops + player.knights + player.rooks + [player.king] + [player.queen]
+
+    def update_elo_score(self, winner, loser, tie, capture_bias=False):
+        k_factor = 32
+        base = 10
+        if not tie:
+            assert (winner is not None) and (loser is not None)
+            actual_winner = 1
+            actual_loser = 0
+        else:
+            assert (winner is None) and (loser is None)
+            winner = self.player_1
+            loser = self.player_2
+            actual_winner = 0.5
+            actual_loser = 0.5
+
+        expected_winner = 1 / (1 + base**((loser.elo_score - winner.elo_score)/400))
+        expected_loser = 1 / (1 + base**((winner.elo_score - loser.elo_score)/400))
+        winner.elo_score = winner.elo_score + (k_factor*(actual_winner - expected_winner))
+        loser.elo_score = loser.elo_score + (k_factor*(actual_loser - expected_loser))
+
+        if capture_bias:
+            # calculate the final value of their pieces at a tie and add to the elo score
+            winner_piece_value = winner.calculate_score()
+            loser_piece_value = loser.calculate_score()
+            diff = winner_piece_value - loser_piece_value
+
+            # if diff is positive add to winner, subtract from loser
+            # if diff is negative add negative to winner, subtract negative from loser (actually played better so winner)
+            winner.elo_score = winner.elo_score + (0.1*diff)
+            loser.elo_score = loser.elo_score - (0.1*diff)
+            print("Elo scores: ", winner.elo_score, loser.elo_score)
 
     def pop_last_move(self):
         """ Chess bot only:
@@ -1209,6 +1391,10 @@ class Board:
                 based on the number of legal steps it can take (e.g. advantageous when its king is in check)
         The 'white' chess bot consistently looks 1 step ahead (which is defined as max_depth=0)
         """
+        winner = None
+        loser = None
+        tie = False
+
         i = 0
         run = True
         while run:
@@ -1219,53 +1405,24 @@ class Board:
                 active_player = self.player_2
                 passive_player = self.player_1
 
-            if active_player.color == "white":
-                p, new_pos = active_player.choose_move(max_depth=0)
-            else:
-                a = active_player.get_available_pieces()
-                complexity = []
-                for p in a:
-                    complexity.extend(p.get_legal_positions())
-                if len(complexity) < 2:
-                    print("Chess bot: color = black, max depth = 2")
-                    p, new_pos = active_player.choose_move(max_depth=3)
-                elif len(complexity) < 4:
-                    print("Chess bot: color = black, max depth = 2")
-                    p, new_pos = active_player.choose_move(max_depth=2)
-                elif len(complexity) < 10:
-                    print("Chess bot: color = black, max depth = 1")
-                    p, new_pos = active_player.choose_move(max_depth=1)
-                else:
-                    print("Chess bot: color = black, max depth = 0")
-                    p, new_pos = active_player.choose_move(max_depth=0)
+            active_piece, new_pos = active_player.choose_move()
 
-            if isinstance(p, Piece):
-                if verbose:
-                    print("piece", p, new_pos)
-                active_piece = active_player.get_piece(id=p.id)
-            else:
-                raise ValueError(f"Selected piece is of type {type(p)} and not Piece")
-                # avail_pieces = active_player.get_available_pieces()
-                # random_piece_id = random.choice([piece.id for piece in avail_pieces])
-                # active_piece = active_player.get_piece(id=random_piece_id)
-                # avail_positions = active_piece.get_legal_positions()
-                # new_pos = random.choice(avail_positions)
+            if verbose:
+                print(f"Move: {active_piece} -- {new_pos}")
 
             if active_piece:
-                new_position = new_pos
-
                 # if opponent is there -- remove that piece from the board
-                capture = passive_player.get_piece(new_position)
+                capture = passive_player.get_piece(new_pos)
                 if capture is not None:
                     passive_player.pop_piece(capture, verbose)
-                active_piece.move(to=new_position)
-                active_piece.promote(new_position, verbose)
+                active_piece.move(to=new_pos)
+                active_piece.promote(new_pos, verbose)
 
             else:
                 if run:
-                    print("Finished with tie")
-                else:
-                    pass
+                    print("Finished with a tie!")
+                    tie = True
+                    return winner, loser, tie
 
             self.update_board()
 
@@ -1275,29 +1432,48 @@ class Board:
 
             # increment i
             i += 1
+            if (i == 50) or (i == 100) or (i == 150):
+                print(i)
 
             # Check if anyone is losing
             run = not np.any([self.player_1.losing, self.player_2.losing])
 
+            # Check if we only have king vs king
             if (len(self.player_1.pieces) + len(self.player_2.pieces)) == 2:
                 print("King vs King -- stopping game")
+                run = False
+
+            # Check if we reached 1000 steps
+            if i > self.max_steps:
+                print(f"Reached max_steps={self.max_steps} -- stopping game")
                 run = False
 
             if not run:
                 print(self)
                 if self.player_1.losing:
                     print(f"{self.player_1.color} has lost")
-                else:
+                    winner = self.player_2
+                    loser = self.player_1
+                elif self.player_2.losing:
                     print(f"{self.player_2.color} has lost")
+                    winner = self.player_1
+                    loser = self.player_2
+                else:
+                    tie = True
+                    return winner, loser, tie
                 print("Total number of steps: ", i)
-
+        return winner, loser, tie
 
 def main():
     """Initialize and play one game with two chess bots against each other"""
-    player_1 = Player("white")
-    player_2 = Player("black")
+    player_1 = Player("white", engine="ai")
+    player_2 = Player("black", engine="ai", max_depth=0)
     board = Board(player_1, player_2)
-    board.play(show=False, verbose=False)
+    winner, loser, tie = board.play(show=False, verbose=False)
+    print("winner", winner)
+    print("loser", loser)
+    print("tie", tie)
+
 
 
 if __name__ == '__main__':
