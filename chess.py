@@ -1146,6 +1146,8 @@ class Player:
         return encoded_board
 
     def human_move(self):
+        print(" ")
+        print("Your turn.")
         user_input = input("Select: piece, x, y \n")
         user_input = user_input.split(sep=",")
         piece_repr = user_input[0]
@@ -1408,7 +1410,15 @@ class Board:
             active_piece, new_pos = active_player.choose_move()
 
             if verbose:
-                print(f"Move: {active_piece} -- {new_pos}")
+                print(". ")
+                print(". ")
+                print(". ")
+                print(". ")
+                print(". ")
+                print(". ")
+                print(". ")
+                print(". ")
+                print(f"{active_player.engine.upper()}'s move: {active_piece} to {tuple(new_pos)}")
 
             if active_piece:
                 # if opponent is there -- remove that piece from the board
@@ -1429,6 +1439,7 @@ class Board:
             if show:
                 # show board
                 print(self)
+                time.sleep(3)
 
             # increment i
             i += 1
@@ -1466,10 +1477,34 @@ class Board:
 
 def main():
     """Initialize and play one game with two chess bots against each other"""
-    player_1 = Player("white", engine="ai")
-    player_2 = Player("black", engine="ai", max_depth=0)
+
+    player_1 = Player("white", engine="human")
+    player_2 = Player("black", engine="ai")
+
+    print(" ")
+    print(" ")
+    print(" ")
+    print(" ")
+    print(" ")
+    print(" ")
+    print(" ")
+    print(" ")
+    print(" ")
+
+
+
+    print("Initializing game.")
+    print("player_1 = Player('white', engine='human')")
+    print("player_2 = Player('black', engine='ai')")
+    print("board = Board(player_1, player_2")
+    print("board.play(show=True)")
+
     board = Board(player_1, player_2)
-    winner, loser, tie = board.play(show=False, verbose=False)
+    print(board)
+    winner, loser, tie = board.play(show=True, verbose=True)
+
+
+
     print("winner", winner)
     print("loser", loser)
     print("tie", tie)
